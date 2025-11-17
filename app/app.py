@@ -1,40 +1,245 @@
 from autentication import sp
 import pandas as pd
+import re
 
-# Playlists populares de LATAM
-playlists_latam = {
-    'Top 50 México': '37i9dQZEVXbO3qyFxbkOE1',
-    'Top 50 Argentina': '37i9dQZEVXbMMy2roB9myp',
-    'Top 50 Colombia': '37i9dQZEVXbOa2GkKuHpJ6',
-    'Top 50 Chile': '37i9dQZEVXbL0GavIqMTeb',
-    'Top 50 Perú': '37i9dQZEVXbJfdy5b0KP7W',
-}
+# Función para buscar múltiples playlists por género
+def buscar_playlist_genero(genero, limite=10):
+    """Busca múltiples playlists de un género musical"""
+    query = f'Top {genero}'
+    playlists_encontradas = []
+    
+    try:
+        results = sp.search(q=query, type='playlist', limit=50)  # Buscar más resultados
+        
+        if results and results['playlists']['items']:
+            for playlist in results['playlists']['items']:
+                if playlist and genero.lower() in playlist['name'].lower():
+                    es_oficial = 'spotify' in playlist['owner']['id'].lower()
+                    tipo = "oficial" if es_oficial else "popular"
+                    print(f"✓ Playlist {tipo}: {playlist['name']} - ID: {playlist['id']}")
+                    
+                    playlists_encontradas.append({
+                        'id': playlist['id'], 
+                        'name': playlist['name'],
+                        'oficial': es_oficial
+                    })
+                    
+                    # Limitar cantidad de playlists
+                    if len(playlists_encontradas) >= limite:
+                        break
+                
+    except Exception as e:
+        print(f"Error buscando playlists de {genero}: {e}")
+    
+    return playlists_encontradas if playlists_encontradas else []
 
+# Lista de géneros musicales
 generos = [
-    'Reggaeton', 'Rock', 'Pop', 'Rap', 'Metal', 'Salsa', 'Cumbia', 
-    'Norteña', 'Popular', 'Vallenato', 'House', 'Electronica', 'Indie'
+    'Reggaeton', 
+    #'Rock', 'Pop', 'Rap', 'Metal', 'Salsa', 'Cumbia', 
+    #'Norteña', 'Popular', 'Vallenato', 'House', 'Electronica', 'Indie'
 ]
-playlist_encontradas = {}
+
+# Buscar playlists dinámicamente por género
+print("=== BUSCANDO PLAYLISTS POR GÉNERO ===\n")
+playlists_generos = {}
 
 for genero in generos:
-    query = f'Top {genero}'
-    results = sp.search(q=query, type='playlist', limit=5) 
+    playlists = buscar_playlist_genero(genero, limite=20)
+    if playlists:
+        playlists_generos[genero] = playlists
+        print(f"✓ {genero}: {len(playlists)} playlists encontradas\n")
 
-    playlists = [p for p in results['playlists']['items'] if p is not None]
+total_playlists = sum(len(playlists) for playlists in playlists_generos.values())
+print(f"\n✓ Total de playlists encontradas: {total_playlists}\n")
 
-    print(f'\nResultados para la {query}:\n')
-    for idx, playlist in enumerate(playlists, 1):
-        print(f'{idx}.  {playlist['name']}')
-        print(f'ID:     {playlist['id']}')
-        print(f'Owner:  {playlist['owner']['display_name']}')
-        print(f'Tracks: {playlist['tracks']['total']}')
-        print(f'URL: {playlist['external_urls']['spotify']}')
-        
-        playlist_encontradas[playlist['name']] = playlist['id']
-
-print(playlist_encontradas)
+# Obtener tracks de las playlists por género
 all_tracks = []
 
-#for pais, playlist_id in playlists_encontradas
+print("\n=== OBTENIENDO CANCIONES DE PLAYLISTS POR GÉNERO ===\n")
+for genero, playlists in playlists_generos.items():
+    for playlist_info in playlists:
+        try:
+            print(f"Obteniendo canciones de {genero} ({playlist_info['name']})...")
+            tracks = sp.playlist_tracks(playlist_info['id'])
+            
+            if tracks and 'items' in tracks:
+                print(f"✓ {len(tracks['items'])} canciones obtenidas")
+                all_tracks.extend(tracks['items'])
+            else:
+                print(f"⚠ No se encontraron canciones")
+                
+        except Exception as e:
+            print(f"✗ Error al obtener canciones: {e}")
 
-print("\nExtrayendo canciones...")
+print(f"\n✓ Total de canciones recopiladas: {len(all_tracks)}")
+
+# Extraer nombres de canciones por género
+print("\n=== EXTRAYENDO NOMBRES DE CANCIONES POR GÉNERO ===\n")
+playlists_canciones = {}
+
+for genero, playlists in playlists_generos.items():
+    nombres_canciones = []
+    for playlist_info in playlists:
+        try:
+            tracks = sp.playlist_tracks(playlist_info['id'])
+            
+            if tracks and 'items' in tracks:
+                # Extraer solo los nombres de las canciones
+                for item in tracks['items']:
+                    if item and item['track']:
+                        nombre_cancion = item['track']['name']
+                        nombres_canciones.append(nombre_cancion)
+                
+        except Exception as e:
+            print(f"✗ Error procesando playlist {playlist_info['name']}: {e}")
+    
+    if nombres_canciones:
+        playlists_canciones[genero] = nombres_canciones
+        print(f"✓ {genero}: {len(nombres_canciones)} canciones totales")
+
+# Mostrar las canciones de cada género
+print("\n=== LISTAS DE CANCIONES POR GÉNERO ===\n")
+for genero, canciones in playlists_canciones.items():
+    print(f"\n{genero}:")
+    print("-" * 50)
+    for idx, cancion in enumerate(canciones, 1):
+        print(f"{idx}. {cancion}")
+    print()
+
+# Función para limpiar paréntesis
+def limpiar_parentesis(texto):
+    """Elimina paréntesis y su contenido de un string"""
+    if texto:
+        # Elimina paréntesis y su contenido, y espacios extra
+        texto_limpio = re.sub(r'\s*\([^)]*\)', '', texto)
+        # Elimina espacios múltiples y espacios al inicio/final
+        texto_limpio = re.sub(r'\s+', ' ', texto_limpio).strip()
+        return texto_limpio
+    return texto
+
+# Crear DataFrame con todas las canciones
+print("\n=== CREANDO DATAFRAME CON TODAS LAS CANCIONES ===\n")
+datos_canciones = []
+for genero, playlists in playlists_generos.items():
+    for playlist_info in playlists:
+        try:
+            tracks = sp.playlist_tracks(playlist_info['id'])
+            
+            if tracks and 'items' in tracks:
+                for item in tracks['items']:
+                    if item and item['track']:
+                        track = item['track']
+                        
+                        # Limpiar nombres de paréntesis
+                        nombre_cancion = limpiar_parentesis(track['name'])
+                        nombre_artistas = ', '.join([limpiar_parentesis(artist['name'].title()) for artist in track['artists']])
+                        
+                        datos_canciones.append({
+                            'genero': genero,
+                            'playlist': playlist_info['name'].title(),
+                            'cancion': nombre_cancion.title(),
+                            'artista': nombre_artistas,
+                            'popularidad': track['popularity'],
+                            'id': track['id']
+                        })
+        except Exception as e:
+            print(f"✗ Error procesando playlist {playlist_info['name']}: {e}")
+
+df_canciones = pd.DataFrame(datos_canciones)
+print(f"✓ DataFrame creado con {len(df_canciones)} canciones")
+print("\nMuestra de canciones:")
+print(df_canciones.sample(min(60, len(df_canciones))))
+
+print("\n=== TOKENIZANDO CANCIONES ===\n")
+
+# Estructura principal: lista de listas (cada sublista es una playlist tokenizada)
+playlists_tokenizadas = []
+
+# Diccionario de mapeo: "cancion - artista" -> token_id
+canciones_a_tokens = {}
+
+# Diccionario inverso: token_id -> {'cancion': nombre, 'artista': artista}
+tokens_a_canciones = {}
+
+token = 0
+
+# Iterar sobre cada género y cada playlist individual
+for genero, playlists in playlists_generos.items():
+    print(f"\n--- Tokenizando playlists de {genero} ---")
+    
+    for playlist_info in playlists:
+        try:
+            # Obtener canciones de esta playlist específica
+            tracks = sp.playlist_tracks(playlist_info['id'])
+            
+            if tracks and 'items' in tracks:
+                tokens_playlist_actual = []
+                
+                print(f"\nPlaylist: {playlist_info['name']}")
+                
+                for item in tracks['items']:
+                    if item and item['track']:
+                        nombre_cancion = item['track']['name'].lower()
+                        # Obtener artistas (puede haber múltiples)
+                        artistas = ', '.join([artist['name'] for artist in item['track']['artists']])
+                        
+                        # Crear clave única: cancion + artista
+                        clave_unica = f"{nombre_cancion} - {artistas.lower()}"
+                        
+                        # Si la canción NO ha sido tokenizada, crear nuevo token
+                        if clave_unica not in canciones_a_tokens:
+                            token += 1
+                            canciones_a_tokens[clave_unica] = token
+                            tokens_a_canciones[token] = {
+                                'cancion': nombre_cancion,
+                                'artista': artistas
+                            }
+                            tokens_playlist_actual.append(token)
+                            print(f"  ✓ Nueva: '{nombre_cancion}' - {artistas} -> Token {token}")
+                        else:
+                            # Si ya existe, reutilizar el token existente
+                            token_existente = canciones_a_tokens[clave_unica]
+                            tokens_playlist_actual.append(token_existente)
+                            print(f"  ↻ Repetida: '{nombre_cancion}' - {artistas} -> Token {token_existente}")
+                
+                # Agregar esta playlist tokenizada a la lista principal
+                playlists_tokenizadas.append(tokens_playlist_actual)
+                print(f"  ✓ Playlist tokenizada: {len(tokens_playlist_actual)} canciones, {len(set(tokens_playlist_actual))} únicas")
+                
+        except Exception as e:
+            print(f"  ✗ Error tokenizando playlist {playlist_info['name']}: {e}")
+
+print(f"\n{'='*60}")
+print(f"✓ Total de playlists tokenizadas: {len(playlists_tokenizadas)}")
+print(f"✓ Total de canciones únicas: {len(canciones_a_tokens)}")
+print(f"✓ Total de tokens en todas las playlists: {sum(len(p) for p in playlists_tokenizadas)}")
+print(f"{'='*60}")
+
+# Mostrar ejemplos de uso
+print("\n=== EJEMPLOS DE USO ===\n")
+
+print("1. Primera playlist tokenizada (primeros 10 tokens):")
+print(f"   {playlists_tokenizadas[0][:10]}")
+
+print(f"\n2. Buscar canción y artista por token (ej: token {list(tokens_a_canciones.keys())[0]}):")
+primer_token = list(tokens_a_canciones.keys())[0]
+info = tokens_a_canciones[primer_token]
+print(f"   Token {primer_token} ->")
+print(f"      Canción: '{info['cancion']}'")
+print(f"      Artista: {info['artista']}")
+
+print(f"\n3. Buscar token por canción-artista:")
+ejemplo_clave = list(canciones_a_tokens.keys())[0]
+print(f"   '{ejemplo_clave}' -> Token {canciones_a_tokens[ejemplo_clave]}")
+
+print(f"\n4. Estructura completa:")
+print(f"   - playlists_tokenizadas: lista con {len(playlists_tokenizadas)} sublistas")
+print(f"   - canciones_a_tokens: diccionario con {len(canciones_a_tokens)} canciones")
+print(f"   - tokens_a_canciones: diccionario con {len(tokens_a_canciones)} tokens")
+print(f"     Cada token mapea a: {{'cancion': '...', 'artista': '...'}}")
+
+# Guardar a CSV
+csv_filename = 'canciones_playlists_generos.csv'
+df_canciones.to_csv(csv_filename, index=False, encoding='utf-8')
+print(f"\n✓ Datos guardados en: {csv_filename}")
