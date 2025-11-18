@@ -1,245 +1,514 @@
-from autentication import sp
+from recommendations import print_recommendations
+import streamlit as st
+import pickle
 import pandas as pd
-import re
+from datetime import datetime
 
-# Función para buscar múltiples playlists por género
-def buscar_playlist_genero(genero, limite=10):
-    """Busca múltiples playlists de un género musical"""
-    query = f'Top {genero}'
-    playlists_encontradas = []
+st.set_page_config(
+    page_title="Spotify EmbedRecommender",
+    page_icon="🎧",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ============================================
+# CUSTOM CSS STYLES
+# ============================================
+st.markdown("""
+    <style>
+    /* Fondo oscuro estilo Spotify */
+    .stApp {
+        background-color: #121212;
+    }
     
+    /* Header principal */
+    .main-header {
+        font-size: 3.5rem;
+        font-weight: bold;
+        background: linear-gradient(90deg, #1DB954 0%, #1ed760 50%, #1DB954 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-align: center;
+        padding: 1rem 0;
+        margin-bottom: 0;
+    }
+    
+    .sub-header {
+        text-align: center;
+        color: #b3b3b3;
+        margin-bottom: 2rem;
+        font-size: 1.2rem;
+    }
+    
+    /* Mejorar el input */
+    .stTextInput input {
+        background-color: #282828;
+        color: #ffffff;
+        border: 2px solid #1DB954;
+        border-radius: 25px;
+        padding: 15px 25px;
+        font-size: 16px;
+        transition: all 0.3s;
+    }
+    
+    .stTextInput input:focus {
+        border-color: #1ed760;
+        box-shadow: 0 0 15px rgba(29, 185, 84, 0.3);
+    }
+    
+    /* Botón estilo Spotify */
+    .stButton button {
+        background-color: #1DB954;
+        color: white;
+        border-radius: 25px;
+        font-weight: bold;
+        border: none;
+        padding: 15px 30px;
+        transition: all 0.3s;
+        font-size: 16px;
+    }
+    
+    .stButton button:hover {
+        background-color: #1ed760;
+        transform: scale(1.05);
+        box-shadow: 0 5px 15px rgba(29, 185, 84, 0.4);
+    }
+    
+    /* Cards de recomendaciones */
+    .song-card {
+        background: linear-gradient(135deg, #282828 0%, #181818 100%);
+        padding: 20px;
+        border-radius: 15px;
+        margin: 10px 0;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        border-left: 4px solid #1DB954;
+        transition: all 0.3s;
+    }
+    
+    .song-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 12px rgba(29, 185, 84, 0.3);
+    }
+    
+    .song-title {
+        color: white;
+        margin: 0;
+        font-size: 1.3rem;
+        font-weight: bold;
+    }
+    
+    .song-artist {
+        color: #b3b3b3;
+        margin: 5px 0;
+        font-size: 1rem;
+    }
+    
+    /* Mejorar el dataframe */
+    .stDataFrame {
+        border-radius: 10px;
+        overflow: hidden;
+    }
+    
+    /* Sidebar */
+    .css-1d391kg {
+        background-color: #181818;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: #282828;
+        border-radius: 10px;
+        color: white;
+    }
+    
+    /* Métricas */
+    .stMetric {
+        background-color: #282828;
+        padding: 15px;
+        border-radius: 10px;
+    }
+    
+    /* Slider */
+    .stSlider > div > div > div {
+        background-color: #1DB954;
+    }
+    
+    /* Success/Error messages */
+    .stSuccess {
+        background-color: #1DB954;
+        color: white;
+        border-radius: 10px;
+    }
+    
+    .stError {
+        background-color: #e22134;
+        color: white;
+        border-radius: 10px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ============================================
+# FUNCIONES DE CARGA CON CACHE
+# ============================================
+@st.cache_resource
+def load_model():
+    """Carga el modelo con cache para mejor performance"""
     try:
-        results = sp.search(q=query, type='playlist', limit=50)  # Buscar más resultados
-        
-        if results and results['playlists']['items']:
-            for playlist in results['playlists']['items']:
-                if playlist and genero.lower() in playlist['name'].lower():
-                    es_oficial = 'spotify' in playlist['owner']['id'].lower()
-                    tipo = "oficial" if es_oficial else "popular"
-                    print(f"✓ Playlist {tipo}: {playlist['name']} - ID: {playlist['id']}")
-                    
-                    playlists_encontradas.append({
-                        'id': playlist['id'], 
-                        'name': playlist['name'],
-                        'oficial': es_oficial
-                    })
-                    
-                    # Limitar cantidad de playlists
-                    if len(playlists_encontradas) >= limite:
-                        break
-                
+        with open('model/modelo.pkl', 'rb') as f:
+            model = pickle.load(f)
+        return model
     except Exception as e:
-        print(f"Error buscando playlists de {genero}: {e}")
+        st.error(f"Error loading model: {str(e)}")
+        return None
+
+@st.cache_data
+def load_data():
+    """Carga los datos con cache"""
+    try:
+        with open('data/datos_tokenizacion.pkl', 'rb') as f:
+            datos = pickle.load(f)
+            playlists_tokenizadas = datos['playlists_tokenizadas']
+            canciones_a_tokens = datos['canciones_a_tokens']
+            tokens_a_canciones = datos['tokens_a_canciones']
+
+        # Crear DataFrame con columnas separadas: cancion, artista, token
+        songs_df = []
+        for token, info in tokens_a_canciones.items():
+            songs_df.append({
+                'cancion': info['cancion'],
+                'artista': info['artista'],
+                'token': token
+            })
+
+        return pd.DataFrame(songs_df), canciones_a_tokens, tokens_a_canciones
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        return None, None, None
+
+# ============================================
+# INICIALIZACIÓN DE SESSION STATE
+# ============================================
+if 'search_history' not in st.session_state:
+    st.session_state.search_history = []
+
+if 'favorites' not in st.session_state:
+    st.session_state.favorites = []
+
+if 'last_recommendations' not in st.session_state:
+    st.session_state.last_recommendations = None
+
+# ============================================
+# CARGAR DATOS
+# ============================================
+model = load_model()
+songs_df, canciones_a_tokens, tokens_a_canciones = load_data()
+
+# ============================================
+# SIDEBAR
+# ============================================
+with st.sidebar:
+    st.markdown("## ⚙️ Settings")
     
-    return playlists_encontradas if playlists_encontradas else []
-
-# Lista de géneros musicales
-generos = [
-    'Reggaeton', 
-    #'Rock', 'Pop', 'Rap', 'Metal', 'Salsa', 'Cumbia', 
-    #'Norteña', 'Popular', 'Vallenato', 'House', 'Electronica', 'Indie'
-]
-
-# Buscar playlists dinámicamente por género
-print("=== BUSCANDO PLAYLISTS POR GÉNERO ===\n")
-playlists_generos = {}
-
-for genero in generos:
-    playlists = buscar_playlist_genero(genero, limite=20)
-    if playlists:
-        playlists_generos[genero] = playlists
-        print(f"✓ {genero}: {len(playlists)} playlists encontradas\n")
-
-total_playlists = sum(len(playlists) for playlists in playlists_generos.values())
-print(f"\n✓ Total de playlists encontradas: {total_playlists}\n")
-
-# Obtener tracks de las playlists por género
-all_tracks = []
-
-print("\n=== OBTENIENDO CANCIONES DE PLAYLISTS POR GÉNERO ===\n")
-for genero, playlists in playlists_generos.items():
-    for playlist_info in playlists:
-        try:
-            print(f"Obteniendo canciones de {genero} ({playlist_info['name']})...")
-            tracks = sp.playlist_tracks(playlist_info['id'])
-            
-            if tracks and 'items' in tracks:
-                print(f"✓ {len(tracks['items'])} canciones obtenidas")
-                all_tracks.extend(tracks['items'])
-            else:
-                print(f"⚠ No se encontraron canciones")
-                
-        except Exception as e:
-            print(f"✗ Error al obtener canciones: {e}")
-
-print(f"\n✓ Total de canciones recopiladas: {len(all_tracks)}")
-
-# Extraer nombres de canciones por género
-print("\n=== EXTRAYENDO NOMBRES DE CANCIONES POR GÉNERO ===\n")
-playlists_canciones = {}
-
-for genero, playlists in playlists_generos.items():
-    nombres_canciones = []
-    for playlist_info in playlists:
-        try:
-            tracks = sp.playlist_tracks(playlist_info['id'])
-            
-            if tracks and 'items' in tracks:
-                # Extraer solo los nombres de las canciones
-                for item in tracks['items']:
-                    if item and item['track']:
-                        nombre_cancion = item['track']['name']
-                        nombres_canciones.append(nombre_cancion)
-                
-        except Exception as e:
-            print(f"✗ Error procesando playlist {playlist_info['name']}: {e}")
+    # Número de recomendaciones
+    num_recommendations = st.slider(
+        "Number of recommendations",
+        min_value=5,
+        max_value=20,
+        value=10,
+        help="Select how many songs you want to receive as recommendations"
+    )
     
-    if nombres_canciones:
-        playlists_canciones[genero] = nombres_canciones
-        print(f"✓ {genero}: {len(nombres_canciones)} canciones totales")
-
-# Mostrar las canciones de cada género
-print("\n=== LISTAS DE CANCIONES POR GÉNERO ===\n")
-for genero, canciones in playlists_canciones.items():
-    print(f"\n{genero}:")
-    print("-" * 50)
-    for idx, cancion in enumerate(canciones, 1):
-        print(f"{idx}. {cancion}")
-    print()
-
-# Función para limpiar paréntesis
-def limpiar_parentesis(texto):
-    """Elimina paréntesis y su contenido de un string"""
-    if texto:
-        # Elimina paréntesis y su contenido, y espacios extra
-        texto_limpio = re.sub(r'\s*\([^)]*\)', '', texto)
-        # Elimina espacios múltiples y espacios al inicio/final
-        texto_limpio = re.sub(r'\s+', ' ', texto_limpio).strip()
-        return texto_limpio
-    return texto
-
-# Crear DataFrame con todas las canciones
-print("\n=== CREANDO DATAFRAME CON TODAS LAS CANCIONES ===\n")
-datos_canciones = []
-for genero, playlists in playlists_generos.items():
-    for playlist_info in playlists:
-        try:
-            tracks = sp.playlist_tracks(playlist_info['id'])
-            
-            if tracks and 'items' in tracks:
-                for item in tracks['items']:
-                    if item and item['track']:
-                        track = item['track']
-                        
-                        # Limpiar nombres de paréntesis
-                        nombre_cancion = limpiar_parentesis(track['name'])
-                        nombre_artistas = ', '.join([limpiar_parentesis(artist['name'].title()) for artist in track['artists']])
-                        
-                        datos_canciones.append({
-                            'genero': genero,
-                            'playlist': playlist_info['name'].title(),
-                            'cancion': nombre_cancion.title(),
-                            'artista': nombre_artistas,
-                            'popularidad': track['popularity'],
-                            'id': track['id']
-                        })
-        except Exception as e:
-            print(f"✗ Error procesando playlist {playlist_info['name']}: {e}")
-
-df_canciones = pd.DataFrame(datos_canciones)
-print(f"✓ DataFrame creado con {len(df_canciones)} canciones")
-print("\nMuestra de canciones:")
-print(df_canciones.sample(min(60, len(df_canciones))))
-
-print("\n=== TOKENIZANDO CANCIONES ===\n")
-
-# Estructura principal: lista de listas (cada sublista es una playlist tokenizada)
-playlists_tokenizadas = []
-
-# Diccionario de mapeo: "cancion - artista" -> token_id
-canciones_a_tokens = {}
-
-# Diccionario inverso: token_id -> {'cancion': nombre, 'artista': artista}
-tokens_a_canciones = {}
-
-token = 0
-
-# Iterar sobre cada género y cada playlist individual
-for genero, playlists in playlists_generos.items():
-    print(f"\n--- Tokenizando playlists de {genero} ---")
+    st.markdown("---")
     
-    for playlist_info in playlists:
+    # Modo de visualización
+    st.markdown("### 🎨 Display Mode")
+    view_mode = st.radio(
+        "Choose how to display results:",
+        ["Cards", "Table", "Both"],
+        index=0
+    )
+    
+    st.markdown("---")
+    
+    # Historial de búsqueda
+    if st.session_state.search_history:
+        st.markdown("### 📜 Recent Searches")
+        for i, search in enumerate(reversed(st.session_state.search_history[-5:])):
+            if st.button(f"🔍 {search}", key=f"history_{i}"):
+                st.session_state.selected_from_history = search
+        
+        if st.button("🗑️ Clear History"):
+            st.session_state.search_history = []
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Favoritos
+    if st.session_state.favorites:
+        st.markdown("### ⭐ Favorites")
+        for i, fav in enumerate(st.session_state.favorites[-5:]):
+            st.text(f"♥ {fav}")
+        
+        if st.button("🗑️ Clear Favorites"):
+            st.session_state.favorites = []
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Información
+    with st.expander("ℹ️ About"):
+        st.markdown("""
+        **Spotify EmbedRecommender** uses advanced 
+        machine learning algorithms to find songs 
+        similar to your favorites.
+        
+        **How it works:**
+        1. Enter a song name
+        2. Our AI analyzes patterns
+        3. Get personalized recommendations
+        
+        **Version:** 2.0  
+        **Last Update:** 2024
+        """)
+
+# ============================================
+# MAIN HEADER
+# ============================================
+st.markdown('<h1 class="main-header">🎧 Spotify EmbedRecommender</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Discover your next favorite song powered by AI</p>', unsafe_allow_html=True)
+
+# ============================================
+# EXAMPLE QUESTIONS
+# ============================================
+with st.expander("💡 Example Songs to Try"):
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("""
+        **Rock Classics:**
+        - Bohemian Rhapsody
+        - Nothing Else Matters
+        - In the End
+        """)
+    with col2:
+        st.markdown("""
+        **Latin Hits:**
+        - Tití Me Preguntó
+        - Pedro Navaja
+        - La Plena
+        """)
+    with col3:
+        st.markdown("""
+        **Pop Favorites:**
+        - Shape of You
+        - Blinding Lights
+        - Levitating
+        """)
+
+st.markdown("---")
+
+# ============================================
+# BÚSQUEDA SIMPLE
+# ============================================
+st.markdown("### 🔍 Find Your Song")
+
+col1, col2 = st.columns([5, 1])
+
+with col1:
+    # Verificar si hay una selección del historial
+    default_value = ""
+    if hasattr(st.session_state, 'selected_from_history'):
+        default_value = st.session_state.selected_from_history
+        delattr(st.session_state, 'selected_from_history')
+    
+    text_input = st.text_input(
+        "Song name:",
+        value=default_value,
+        placeholder="e.g., Bohemian Rhapsody, Tití Me Preguntó...",
+        label_visibility="collapsed"
+    )
+
+with col2:
+    recommend_button = st.button("🎧 Get Recommendations", use_container_width=True, type="primary")
+
+search_query = text_input
+
+# ============================================
+# PROCESAMIENTO DE RECOMENDACIONES
+# ============================================
+if recommend_button:
+    if not search_query or search_query.strip() == "":
+        st.warning("⚠️ Please enter a song name")
+    else:
+        # Agregar al historial
+        if search_query not in st.session_state.search_history:
+            st.session_state.search_history.append(search_query)
+        
         try:
-            # Obtener canciones de esta playlist específica
-            tracks = sp.playlist_tracks(playlist_info['id'])
-            
-            if tracks and 'items' in tracks:
-                tokens_playlist_actual = []
+            with st.spinner('🎵 Analyzing and finding perfect recommendations...'):
+                recommendations = print_recommendations(search_query)
                 
-                print(f"\nPlaylist: {playlist_info['name']}")
-                
-                for item in tracks['items']:
-                    if item and item['track']:
-                        nombre_cancion = item['track']['name'].lower()
-                        # Obtener artistas (puede haber múltiples)
-                        artistas = ', '.join([artist['name'] for artist in item['track']['artists']])
+                if recommendations is not None and not recommendations.empty:
+                    # Limitar al número seleccionado
+                    recommendations = recommendations.head(num_recommendations)
+                    recommendations['cancion'] = recommendations['cancion'].str.title()
+                    recommendations['artista'] = recommendations['artista'].str.title()
+                    
+                    # Guardar en session state
+                    st.session_state.last_recommendations = recommendations
+                    
+                    st.success(f"✅ Found {len(recommendations)} amazing recommendations for you!")
+                    
+                    # Mostrar canción buscada
+                    st.markdown(f"""
+                        <div style="
+                            background: linear-gradient(135deg, #1DB954 0%, #1ed760 100%);
+                            padding: 20px;
+                            border-radius: 15px;
+                            margin: 20px 0;
+                            text-align: center;
+                        ">
+                            <h3 style="color: white; margin: 0;">🎵 Based on: {search_query.title()}</h3>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+                    
+                    # VISUALIZACIÓN EN CARDS
+                    if view_mode in ["Cards", "Both"]:
+                        st.markdown("### 🎵 Your Personalized Recommendations")
                         
-                        # Crear clave única: cancion + artista
-                        clave_unica = f"{nombre_cancion} - {artistas.lower()}"
+                        # Mostrar en grid de 3 columnas
+                        for i in range(0, len(recommendations), 3):
+                            cols = st.columns(3)
+                            for j, col in enumerate(cols):
+                                if i + j < len(recommendations):
+                                    row = recommendations.iloc[i + j]
+                                    with col:
+                                        # Card con botón de favorito
+                                        card_id = f"{row['cancion']}_{row['artista']}"
+                                        is_favorite = card_id in st.session_state.favorites
+                                        
+                                        st.markdown(f"""
+                                            <div class="song-card">
+                                                <h3 class="song-title">🎵 {row['cancion']}</h3>
+                                                <p class="song-artist">👤 {row['artista']}</p>
+                                            </div>
+                                        """, unsafe_allow_html=True)
+                                        
+                                        # Botón de favorito
+                                        fav_button_label = "💚 Favorited" if is_favorite else "🤍 Add to Favorites"
+                                        if st.button(fav_button_label, key=f"fav_{i}_{j}", use_container_width=True):
+                                            if is_favorite:
+                                                st.session_state.favorites.remove(card_id)
+                                            else:
+                                                st.session_state.favorites.append(card_id)
+                                            st.rerun()
+                    
+                    # VISUALIZACIÓN EN TABLA
+                    if view_mode in ["Table", "Both"]:
+                        if view_mode == "Both":
+                            st.markdown("---")
                         
-                        # Si la canción NO ha sido tokenizada, crear nuevo token
-                        if clave_unica not in canciones_a_tokens:
-                            token += 1
-                            canciones_a_tokens[clave_unica] = token
-                            tokens_a_canciones[token] = {
-                                'cancion': nombre_cancion,
-                                'artista': artistas
+                        st.markdown("### 📋 Detailed View")
+                        
+                        # Agregar índice personalizado
+                        recommendations_display = recommendations.copy()
+                        recommendations_display.insert(0, '#', range(1, len(recommendations_display) + 1))
+                        
+                        st.dataframe(
+                            recommendations_display,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "#": st.column_config.NumberColumn(
+                                    "#",
+                                    width="small"
+                                ),
+                                "cancion": st.column_config.TextColumn(
+                                    "Song",
+                                    width="large"
+                                ),
+                                "artista": st.column_config.TextColumn(
+                                    "Artist",
+                                    width="large"
+                                )
                             }
-                            tokens_playlist_actual.append(token)
-                            print(f"  ✓ Nueva: '{nombre_cancion}' - {artistas} -> Token {token}")
-                        else:
-                            # Si ya existe, reutilizar el token existente
-                            token_existente = canciones_a_tokens[clave_unica]
-                            tokens_playlist_actual.append(token_existente)
-                            print(f"  ↻ Repetida: '{nombre_cancion}' - {artistas} -> Token {token_existente}")
+                        )
+                    
+                    st.markdown("---")
+                    
+                    # OPCIONES DE EXPORTACIÓN
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        # Descargar CSV
+                        csv = recommendations.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download as CSV",
+                            data=csv,
+                            file_name=f"recommendations_{search_query}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                    
+                    with col2:
+                        # Copiar al portapapeles
+                        songs_list = "\n".join([f"{row['cancion']} - {row['artista']}" for _, row in recommendations.iterrows()])
+                        st.download_button(
+                            label="📋 Copy List",
+                            data=songs_list,
+                            file_name=f"playlist_{search_query}.txt",
+                            mime="text/plain",
+                            use_container_width=True
+                        )
+                    
+                    with col3:
+                        # Compartir (placeholder)
+                        if st.button("🔗 Share", use_container_width=True):
+                            st.info("💡 Share feature coming soon!")
+                    
+                    # RATING SYSTEM
+                    st.markdown("---")
+                    st.markdown("### ⭐ Rate These Recommendations")
+                    
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        rating = st.slider(
+                            "How satisfied are you with these recommendations?",
+                            1, 5, 3,
+                            format="%d ⭐"
+                        )
+                    
+                    with col2:
+                        if st.button("Submit Rating", use_container_width=True):
+                            st.success("Thanks for your feedback! 🎉")
+                            # Aquí podrías guardar el rating en una base de datos
                 
-                # Agregar esta playlist tokenizada a la lista principal
-                playlists_tokenizadas.append(tokens_playlist_actual)
-                print(f"  ✓ Playlist tokenizada: {len(tokens_playlist_actual)} canciones, {len(set(tokens_playlist_actual))} únicas")
-                
+                else:
+                    st.error("❌ No recommendations found for this song.")
+                    st.info("💡 Try with a different song name or check the spelling.")
+                    
+                    # Sugerencias
+                    if songs_df is not None:
+                        st.markdown("### 🔍 Did you mean?")
+                        # Buscar canciones similares
+                        similar = songs_df[songs_df['cancion'].str.contains(search_query, case=False, na=False)]
+                        if not similar.empty:
+                            for _, row in similar.head(5).iterrows():
+                                st.text(f"• {row['cancion'].title()} - {row['artista'].title()}")
+        
         except Exception as e:
-            print(f"  ✗ Error tokenizando playlist {playlist_info['name']}: {e}")
+            st.error(f"❌ An error occurred: {str(e)}")
+            st.info("💡 Please try again with a different song or contact support if the problem persists.")
 
-print(f"\n{'='*60}")
-print(f"✓ Total de playlists tokenizadas: {len(playlists_tokenizadas)}")
-print(f"✓ Total de canciones únicas: {len(canciones_a_tokens)}")
-print(f"✓ Total de tokens en todas las playlists: {sum(len(p) for p in playlists_tokenizadas)}")
-print(f"{'='*60}")
-
-# Mostrar ejemplos de uso
-print("\n=== EJEMPLOS DE USO ===\n")
-
-print("1. Primera playlist tokenizada (primeros 10 tokens):")
-print(f"   {playlists_tokenizadas[0][:10]}")
-
-print(f"\n2. Buscar canción y artista por token (ej: token {list(tokens_a_canciones.keys())[0]}):")
-primer_token = list(tokens_a_canciones.keys())[0]
-info = tokens_a_canciones[primer_token]
-print(f"   Token {primer_token} ->")
-print(f"      Canción: '{info['cancion']}'")
-print(f"      Artista: {info['artista']}")
-
-print(f"\n3. Buscar token por canción-artista:")
-ejemplo_clave = list(canciones_a_tokens.keys())[0]
-print(f"   '{ejemplo_clave}' -> Token {canciones_a_tokens[ejemplo_clave]}")
-
-print(f"\n4. Estructura completa:")
-print(f"   - playlists_tokenizadas: lista con {len(playlists_tokenizadas)} sublistas")
-print(f"   - canciones_a_tokens: diccionario con {len(canciones_a_tokens)} canciones")
-print(f"   - tokens_a_canciones: diccionario con {len(tokens_a_canciones)} tokens")
-print(f"     Cada token mapea a: {{'cancion': '...', 'artista': '...'}}")
-
-# Guardar a CSV
-csv_filename = 'canciones_playlists_generos.csv'
-df_canciones.to_csv(csv_filename, index=False, encoding='utf-8')
-print(f"\n✓ Datos guardados en: {csv_filename}")
+# ============================================
+# FOOTER
+# ============================================
+st.markdown("---")
+st.markdown("""
+    <div style="text-align: center; color: #b3b3b3; padding: 20px;">
+        <p>Made with ❤️ using Streamlit | Powered by Machine Learning</p>
+        <p style="font-size: 0.8rem;">© 2024 Spotify EmbedRecommender - All rights reserved</p>
+    </div>
+""", unsafe_allow_html=True)
